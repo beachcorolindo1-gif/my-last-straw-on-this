@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Discord LAN Voice Call</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: #313338; color: #DBDEE1; height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+    .header { height: 48px; background: #2B2D31; border-bottom: 1px solid #1E1F22; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; font-weight: bold; font-size: 14px; shrink: 0; }
+    .badge { font-size: 11px; padding: 3px 8px; border-radius: 4px; font-family: monospace; font-weight: 600; }
+    .badge-ok { color: #23A55A; background: rgba(35,165,90,0.15); }
+    .badge-warn { color: #F0B232; background: rgba(240,178,50,0.15); }
+    .banner { background: #2B2D31; border: 1px solid #F0B232; border-radius: 8px; margin: 12px; padding: 12px; font-size: 12px; line-height: 1.4; color: #DBDEE1; }
+    .banner h4 { color: #F0B232; font-size: 13px; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+    .server-bar { display: flex; gap: 8px; margin: 0 12px 10px 12px; }
+    .server-input { flex: 1; background: #1E1F22; border: 1px solid #3F4147; border-radius: 6px; color: #DBDEE1; padding: 8px 10px; font-size: 12px; font-family: monospace; }
+    .server-btn { background: #5865F2; color: white; border: none; border-radius: 6px; padding: 0 14px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .grid { flex: 1; padding: 12px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; overflow-y: auto; }
+    .user-card { background: #2B2D31; border: 2px solid #1E1F22; border-radius: 16px; width: 100%; max-width: 320px; aspect-ratio: 4/3; max-height: 32vh; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; transition: all 0.15s; }
+    .user-card.speaking { border-color: #23A55A; box-shadow: 0 0 20px rgba(35,165,90,0.5); }
+    .avatar { width: 68px; height: 68px; border-radius: 50%; background: linear-gradient(135deg, #10B981, #0D9488); display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: bold; color: white; margin-bottom: 8px; }
+    .name { font-size: 12px; font-weight: 600; color: white; background: #1E1F22; padding: 3px 10px; border-radius: 10px; }
+    .meter { position: absolute; bottom: 10px; width: 100px; height: 4px; background: #1E1F22; border-radius: 2px; overflow: hidden; }
+    .meter-bar { height: 100%; width: 0%; background: #23A55A; transition: width 0.05s linear; }
+    .participants-list { width: 100%; max-width: 320px; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+    .p-tag { font-size: 11px; background: #1E1F22; border: 1px solid #3F4147; border-radius: 6px; padding: 3px 8px; color: #949BA4; }
+    .p-tag.active { border-color: #23A55A; color: #23A55A; }
+    .controls { height: 64px; background: #2B2D31; border-top: 1px solid #1E1F22; display: flex; align-items: center; justify-content: center; gap: 16px; shrink: 0; }
+    .btn { width: 44px; height: 44px; border-radius: 50%; border: none; background: #35373C; color: white; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+    .btn.active { background: #DA373C; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>🔊 Discord Voice</div>
+    <div id="statusBadge" class="badge badge-warn">Connecting...</div>
+  </div>
+
+  <div id="errorBanner" class="banner" style="display: none;">
+    <h4>⚠️ Cloud Voice Server Not Published Yet (404)</h4>
+    <p style="margin-bottom: 6px;">To make the public link live for your brother (beachcorolindo1@gmail.com), click the <strong>'Share'</strong> button at the top-right in Google AI Studio!</p>
+    <p>Or enter your PC's LAN IP or active server URL below to connect right away:</p>
+  </div>
+
+  <div class="server-bar">
+    <input id="serverInput" class="server-input" placeholder="Server URL or IP:port" />
+    <button id="connectBtn" class="server-btn">Connect</button>
+  </div>
+
+  <div class="grid">
+    <div id="card" class="user-card">
+      <div id="avatar" class="avatar">📱</div>
+      <div id="userName" class="name">My Phone (Android APK)</div>
+      <div class="meter"><div id="meterBar" class="meter-bar"></div></div>
+    </div>
+    <div id="peersList" class="participants-list"></div>
+  </div>
+
+  <div class="controls">
+    <button id="muteBtn" class="btn" title="Mute Microphone">🎤</button>
+    <button id="deafenBtn" class="btn" title="Deafen Audio">🎧</button>
+  </div>
+
+  <script>
+    let ws = null, audioCtx = null, micStream = null, isMuted = false, isDeafened = false;
+    let nextPlayTime = 0;
+    const urlParams = new URLSearchParams(window.location.search);
+    const reason = urlParams.get('reason');
+
+    const statusBadge = document.getElementById('statusBadge');
+    const errorBanner = document.getElementById('errorBanner');
+    const serverInput = document.getElementById('serverInput');
+    const connectBtn = document.getElementById('connectBtn');
+    const cardEl = document.getElementById('card');
+    const meterBar = document.getElementById('meterBar');
+    const muteBtn = document.getElementById('muteBtn');
+    const deafenBtn = document.getElementById('deafenBtn');
+    const peersList = document.getElementById('peersList');
+
+    if (reason && reason.includes('404')) {
+      errorBanner.style.display = 'block';
+    }
+
+    const defaultUrl = localStorage.getItem('lan_voice_server') || "https://ais-pre-e5o347hiz63hlzojwrusen-829172823940.asia-east1.run.app";
+    serverInput.value = defaultUrl;
+
+    connectBtn.onclick = () => {
+      const target = serverInput.value.trim();
+      if (target) {
+        localStorage.setItem('lan_voice_server', target);
+        connectWs(target);
+      }
+    };
+
+    function connectWs(rawUrl) {
+      if (ws) {
+        try { ws.close(); } catch(e) {}
+      }
+
+      let wsUrl = rawUrl;
+      if (!wsUrl.startsWith('ws://') && !wsUrl.startsWith('wss://')) {
+        const proto = wsUrl.startsWith('https://') ? 'wss://' : (wsUrl.startsWith('http://') ? 'ws://' : 'wss://');
+        const clean = wsUrl.replace(/^https?:\/\//, '');
+        wsUrl = proto + clean;
+      }
+      if (!wsUrl.includes('/ws')) {
+        wsUrl = wsUrl.replace(/\/+$/, '') + '/ws/voice';
+      }
+
+      statusBadge.textContent = 'Connecting...';
+      statusBadge.className = 'badge badge-warn';
+
+      try {
+        ws = new WebSocket(wsUrl);
+        ws.binaryType = 'arraybuffer';
+
+        ws.onopen = () => {
+          statusBadge.textContent = 'Voice Connected';
+          statusBadge.className = 'badge badge-ok';
+          errorBanner.style.display = 'none';
+
+          ws.send(JSON.stringify({
+            type: 'join',
+            payload: {
+              id: 'phone-' + Math.random().toString(36).substring(2, 7),
+              name: 'Android Phone (APK)',
+              deviceType: 'apk',
+              channelId: 'general-voice',
+              isMuted: isMuted,
+              isDeafened: isDeafened
+            }
+          }));
+          initAudio();
+        };
+
+        ws.onmessage = async (evt) => {
+          if (evt.data instanceof ArrayBuffer) {
+            if (!isDeafened) playPcm(evt.data);
+            return;
+          }
+          if (evt.data instanceof Blob) {
+            const buf = await evt.data.arrayBuffer();
+            if (!isDeafened) playPcm(buf);
+            return;
+          }
+          try {
+            const msg = JSON.parse(evt.data);
+            if (msg.type === 'presence' && msg.participants) {
+              peersList.innerHTML = '';
+              msg.participants.forEach(p => {
+                const tag = document.createElement('div');
+                tag.className = 'p-tag' + (p.isSpeaking ? ' active' : '');
+                tag.textContent = (p.isSpeaking ? '🔊 ' : '👤 ') + p.name;
+                peersList.appendChild(tag);
+              });
+            }
+          } catch(e) {}
+        };
+
+        ws.onclose = () => {
+          statusBadge.textContent = 'Disconnected';
+          statusBadge.className = 'badge badge-warn';
+        };
+
+        ws.onerror = () => {
+          statusBadge.textContent = 'Server Unreachable';
+          statusBadge.className = 'badge badge-warn';
+          errorBanner.style.display = 'block';
+        };
+      } catch(e) {
+        statusBadge.textContent = 'Invalid URL';
+      }
+    }
+
+    async function initAudio() {
+      if (audioCtx) return;
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
+
+        const micSource = audioCtx.createMediaStreamSource(micStream);
+        const scriptNode = audioCtx.createScriptProcessor(2048, 1, 1);
+
+        scriptNode.onaudioprocess = (e) => {
+          if (isMuted) {
+            meterBar.style.width = '0%';
+            cardEl.classList.remove('speaking');
+            return;
+          }
+          const input = e.inputBuffer.getChannelData(0);
+          let sum = 0;
+          const pcm16 = new Int16Array(input.length);
+          for (let i = 0; i < input.length; i++) {
+            const s = Math.max(-1, Math.min(1, input[i]));
+            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            sum += Math.abs(s);
+          }
+          const avg = sum / input.length;
+          const vol = Math.min(100, Math.round(avg * 400));
+          meterBar.style.width = vol + '%';
+          if (vol > 10) cardEl.classList.add('speaking');
+          else cardEl.classList.remove('speaking');
+
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(pcm16.buffer);
+          }
+        };
+
+        micSource.connect(scriptNode);
+        scriptNode.connect(audioCtx.destination);
+      } catch(e) {
+        console.error('Audio init error', e);
+      }
+    }
+
+    function playPcm(arrayBuf) {
+      if (!audioCtx) return;
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+
+      const pcm16 = new Int16Array(arrayBuf);
+      const float32 = new Float32Array(pcm16.length);
+      for (let i = 0; i < pcm16.length; i++) {
+        float32[i] = pcm16[i] / 32768.0;
+      }
+
+      const audioBuffer = audioCtx.createBuffer(1, float32.length, 16000);
+      audioBuffer.getChannelData(0).set(float32);
+
+      const src = audioCtx.createBufferSource();
+      src.buffer = audioBuffer;
+      src.connect(audioCtx.destination);
+
+      const now = audioCtx.currentTime;
+      if (nextPlayTime < now) nextPlayTime = now;
+      src.start(nextPlayTime);
+      nextPlayTime += audioBuffer.duration;
+    }
+
+    muteBtn.onclick = () => {
+      isMuted = !isMuted;
+      muteBtn.classList.toggle('active', isMuted);
+      muteBtn.textContent = isMuted ? '🔇' : '🎤';
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'update_state', isMuted }));
+      }
+    };
+
+    deafenBtn.onclick = () => {
+      isDeafened = !isDeafened;
+      deafenBtn.classList.toggle('active', isDeafened);
+      deafenBtn.textContent = isDeafened ? '🔇' : '🎧';
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'update_state', isDeafened }));
+      }
+    };
+
+    window.addEventListener('click', () => {
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    }, { passive: true });
+    window.addEventListener('touchstart', () => {
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    }, { passive: true });
+
+    connectWs(defaultUrl);
+  </script>
+</body>
+</html>
